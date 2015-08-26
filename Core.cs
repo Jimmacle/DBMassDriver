@@ -1,43 +1,35 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-using Sandbox;
-using Sandbox.Common;
-using Sandbox.Definitions;
-using Sandbox.Game;
+﻿using Sandbox.Common;
+using Sandbox.Common.Components;
 using Sandbox.Common.ObjectBuilders;
-using Sandbox.Common.ObjectBuilders.Definitions;
 using Sandbox.ModAPI;
 using Sandbox.ModAPI.Ingame;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using VRage.Components;
-using Sandbox.Common.Components;
 using VRage.ObjectBuilders;
-using VRage.ModAPI;
 using VRageMath;
 
 //Credit for the scripts in this mod goes to Jimmacle
+#warning Proper mod functionality will require GitHub PR #407 to be merged
 
 namespace DBMassDriver
 {
+    #region DamageSystem
     public static class Data
     {
-        public static List<MassDriverInfo> Drivers;
+        public static List<MDInfo> Drivers;
     }
 
-    public class MassDriverInfo
+    public class MDInfo
     {
-        public long entityId;
-        public int barrelCount;
-        public int compulsatorCount;
+        public long Id;
+        public int DamageMultiplier;
 
-        public MassDriverInfo(long EntID, int bCount, int cCount)
+        public MDInfo(long EntID, int damageMultiplier)
         {
-            entityId = EntID;
-            barrelCount = bCount;
-            compulsatorCount = cCount;
+            Id = EntID;
+            DamageMultiplier = damageMultiplier;
         }
     }
 
@@ -52,15 +44,12 @@ namespace DBMassDriver
                 long attacker = info.AttackerId;
                 MyAPIGateway.Utilities.ShowMessage("", info.AttackerId.ToString());
 
-                //MassDriverInfo sourceDriver = Data.Drivers.Find(d => d.entityId == attacker);
-                /*
+                
+                MDInfo sourceDriver = Data.Drivers.Find(d => d.Id == attacker);
                 if (sourceDriver != null)
                 {
-                    info.Amount = (info.Amount + sourceDriver.barrelCount) * sourceDriver.compulsatorCount;
-                    MyAPIGateway.Utilities.ShowMessage("", info.Amount.ToString());
-                }*/
-
-                MyAPIGateway.Utilities.ShowMessage("", info.Amount.ToString());
+                    info.Amount = info.Amount * sourceDriver.DamageMultiplier;
+                }
             }
             catch
             {
@@ -71,6 +60,7 @@ namespace DBMassDriver
         public void Init()
         {
             //MyAPIGateway.Session.DamageSystem.RegisterBeforeDamageHandler(1, DamageHandler);
+#warning Damage modifier disabled until damage system properly shows attackerId
         }
 
         public override void UpdateBeforeSimulation()
@@ -80,15 +70,15 @@ namespace DBMassDriver
             init = true;
         }
     }
+    #endregion
 
-    //MASS DRIVER BODY CLASS
-    //
     [MyEntityComponentDescriptor(typeof(MyObjectBuilder_SmallGatlingGun), new string[] { "MassDriverBody" })]
     public class MassDriverBody : MyGameLogicComponent
     {
         MyObjectBuilder_EntityBase ObjectBuilder; //object builder for block instance
         IMySmallGatlingGun MDBody;
-        List<Sandbox.ModAPI.IMyBatteryBlock> compulsators;
+        List</*Sandbox.ModAPI.*/IMyBatteryBlock> compulsators;
+        private bool m_enableOnce = false;
 
         public override void Init(MyObjectBuilder_EntityBase objectBuilder)
         {
@@ -109,61 +99,56 @@ namespace DBMassDriver
 
         public override void UpdateBeforeSimulation()
         {
+#warning TODO: Find source of NullReferenceExceptions and fix
             try
             {
                 GetMultiblockConfig();
             }
-            catch (Exception ex)
-            { 
-                //MyAPIGateway.Utilities.ShowMessage("", ex.Message);
-            }
+            catch { }
 
-            if (EnoughPower()) //if conditions are met
+            if (EnoughPower())
             {
                 MDBody.SetCustomName(MDBody.CustomName + ": READY");
-				foreach (Sandbox.ModAPI.IMyBatteryBlock batt in compulsators)
-				{
-					batt.SetCurrentStoredPower(0f);
-				}
-            }
-            else
-            {
-                MDBody.ApplyAction("OnOff_Off");
-                MDBody.SetCustomName(MDBody.CustomName + ": CHARGE");
-            }
-
-            if (MDBody.IsShooting)
-            {
-                //drain 1.21GW from battery bank
-                foreach (Sandbox.ModAPI.IMyBatteryBlock batt in compulsators)
+                if (!m_enableOnce)
                 {
-                    batt.Close();
+                    MDBody.ApplyAction("OnOff_On");
+                    m_enableOnce = true;
                 }
             }
             else
             {
+                //force block to be off to prevent firing
+                MDBody.ApplyAction("OnOff_Off");
+                MDBody.SetCustomName(MDBody.CustomName + ": CHARGE");
+                m_enableOnce = false;
+            }
 
+            if (MDBody.IsShooting)
+            {
+                /* Needs #407
+                foreach (Sandbox.ModAPI.IMyBatteryBlock batt in compulsators)
+                {
+                    batt.SetCurrentStoredPower(batt.CurrentStoredPower - (1210f / compulsators.Count));
+                }*/
             }
 
             base.UpdateBeforeSimulation();
         }
 
-        public bool EnoughPower()
+        public bool EnoughPower() //return true if connected stored power is > 1.21 GW
         {
             float charge = 0;
-            foreach (Sandbox.ModAPI.IMyBatteryBlock batt in compulsators)
+            foreach (/*Sandbox.ModAPI.*/IMyBatteryBlock batt in compulsators)
             {
                 charge += batt.CurrentStoredPower;
             }
-            MyAPIGateway.Utilities.ShowMessage("power", charge.ToString());
             return charge > 1210f;
         }
 
         public void GetMultiblockConfig()
         {
-            //
-            //TODO: Restrict barrel placement to directly in front of the main body
-            //
+
+#warning TODO: Restrict barrel placement to directly in front of the main body
 
             List<Sandbox.ModAPI.IMySlimBlock> connectedBlocks = new List<Sandbox.ModAPI.IMySlimBlock>();
 
@@ -206,9 +191,14 @@ namespace DBMassDriver
                                 searchQueue.Add(FindOffset(block.FatBlock.LocalMatrix, new Vector3I(0, -1, 0)));  //bottom port
                                 break;
                             case "MassDriverCapacitor":
-                                searchQueue.Add(FindOffset(block.FatBlock.LocalMatrix, new Vector3I(0, 0, 2)));  //front port
-                                searchQueue.Add(FindOffset(block.FatBlock.LocalMatrix, new Vector3I(0, 0, -2))); //back port
-                                searchQueue.Add(FindOffset(block.FatBlock.LocalMatrix, new Vector3I(0, -1, 1))); //bottom port
+                                //need to change the translation matrix a little because of the block's even-block-count depth and height
+                                Vector3 fixedCapTranslation = block.FatBlock.LocalMatrix.Translation + block.FatBlock.LocalMatrix.Forward + block.FatBlock.LocalMatrix.Down;
+                                Matrix fixedCapMatrix = block.FatBlock.LocalMatrix;
+                                fixedCapMatrix.Translation = fixedCapTranslation;
+
+                                searchQueue.Add(FindOffset(fixedCapMatrix, new Vector3I(0, 0, 2)));  //front port
+                                searchQueue.Add(FindOffset(fixedCapMatrix, new Vector3I(0, 0, -3))); //back port
+                                searchQueue.Add(FindOffset(fixedCapMatrix, new Vector3I(0, -1, 0))); //bottom port
                                 break;
                             case "MassDriverBarrelSector":
                                 searchQueue.Add(FindOffset(block.FatBlock.LocalMatrix, new Vector3I(0, 0, 2)));  //front port
@@ -234,25 +224,24 @@ namespace DBMassDriver
 
             //build list of connected batteries
             //
-            compulsators = new List<Sandbox.ModAPI.IMyBatteryBlock>();
+            compulsators = new List</*Sandbox.ModAPI.*/IMyBatteryBlock>();
             foreach (var batt in connectedBlocks.FindAll(b => b.GetObjectBuilder().SubtypeId.ToString() == "MassDriverCapacitor"))
             {
-                compulsators.Add(batt.FatBlock as Sandbox.ModAPI.IMyBatteryBlock);
+                compulsators.Add(batt.FatBlock as /*Sandbox.ModAPI.*/IMyBatteryBlock);
             }
 
             //update custom name and info instance
             //
             MDBody.SetCustomName("Mass Driver (" + barrelCount.ToString() + "B|" + compulsatorCount.ToString() + "C)");
 
-            if (Data.Drivers.Find(d => d.entityId == MDBody.EntityId) == null) //add entry for damage handler
+            if (Data.Drivers.Find(d => d.Id == MDBody.EntityId) == null) //add entry for damage handler
             {
-                Data.Drivers.Add(new MassDriverInfo(MDBody.EntityId, barrelCount, compulsatorCount));
+                Data.Drivers.Add(new MDInfo(MDBody.EntityId, compulsatorCount));
             }
             else
             {
-                MassDriverInfo existingEntry = Data.Drivers.Find(d => d.entityId == MDBody.EntityId);
-                existingEntry.barrelCount = barrelCount;
-                existingEntry.compulsatorCount = compulsatorCount;
+                MDInfo existingEntry = Data.Drivers.Find(d => d.Id == MDBody.EntityId);
+                existingEntry.DamageMultiplier = compulsatorCount;
             }
 
             MyAPIGateway.Utilities.ShowMessage("", Data.Drivers.Count().ToString());
